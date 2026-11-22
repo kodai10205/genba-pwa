@@ -31,7 +31,7 @@ button{cursor:pointer}button.p{background:var(--ac);border-color:var(--ac);color
 <div id="chips"></div>
 <div class="add" id="addf"><input id="an" placeholder="品名"><input id="aq" type="number" inputmode="decimal" placeholder="数量"><input id="au" placeholder="単位"><button class="p" id="ab">追加</button></div>
 <div id="list"></div>
-<div class="top"><span class="tag">端末内に自動保存されます</span><span><button id="cp">共有用テキスト</button> <button id="ex">書き出し</button> <button id="im">読み込み</button></span></div>
+<div class="top"><span class="tag" id="tg">端末内に自動保存されます</span><span><button id="cp">共有用テキスト</button> <button id="ex">書き出し</button> <button id="im">読み込み</button> <button id="sy">☁ 同期</button></span></div>
 </div>
 <div id="dlg"><div class="b"><div id="dm" style="font-weight:700"></div><input id="di"><div class="bt"><button id="dno">キャンセル</button><button id="dok" class="p">OK</button></div></div></div>
 <div id="ov"><div><p id="ovm" style="margin:0 0 8px"></p><textarea id="ot" readonly></textarea><button id="oi" class="p" style="margin-top:8px;width:100%;display:none">この内容を取り込む（現在のデータは置き換わります）</button><button id="oc" style="margin-top:8px;width:100%">閉じる</button></div></div>
@@ -53,7 +53,7 @@ let flt='全て',srt='';
 const srtd=a=>{if(!srt)return a;const c=(x,y)=>String(x).localeCompare(String(y),'ja'),r=t=>t==='工具'?0:1;return a.slice().sort((x,y)=>srt==='type'?(r(x.type)-r(y.type))||c(x.name,y.name):c(x.name,y.name))};
 const SC=()=>`<div class="chips"><span class="tag" style="align-self:center">在庫の並び替え</span>${[['','登録順'],['type','工具・材料順'],['name','品名順']].map(c=>`<button data-s="${c[0]}" class="${srt===c[0]?'on':''}">${c[1]}</button>`).join('')}</div>`;
 const $=i=>document.getElementById(i);
-const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch(e){}};
+const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch(e){}if(window.onSave)window.onSave()};
 const cs=()=>S.sites.find(s=>s.id===S.cur);
 const esc=t=>String(t==null?'':t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function render(){
@@ -122,4 +122,48 @@ $('ex').onclick=()=>{const t=JSON.stringify(S);$('ot').readOnly=true;$('ot').val
 $('im').onclick=()=>{$('ot').readOnly=false;$('ot').value='';$('oi').style.display='block';$('ovm').textContent='書き出したテキストを貼り付けてください';$('ov').style.display='block';$('ot').focus()};
 $('oi').onclick=()=>{try{const d=JSON.parse($('ot').value);if(!d.sites||!d.sites.length)throw 0;S=d;if(!S.sites.find(s=>s.id===S.cur))S.cur=S.sites[0].id;S.tab='all';save();$('ov').style.display='none';render()}catch(e){$('ovm').textContent='読み込めませんでした。書き出したテキスト全体を貼り付けてください'}};
 render();
-</script><script>if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));</script></body></html>
+</script><script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {initializeFirestore,persistentLocalCache,getFirestore,doc,getDoc,setDoc,onSnapshot} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+const app=initializeApp({apiKey:"AIzaSyCyobeQw7P745aLZtT2Vnw0dtk8a1AJS-M",authDomain:"genba-kanri-e2d49.firebaseapp.com",projectId:"genba-kanri-e2d49",storageBucket:"genba-kanri-e2d49.firebasestorage.app",messagingSenderId:"569355589690",appId:"1:569355589690:web:4ecfb0c2a9452691f3fd03"});
+let db;try{db=initializeFirestore(app,{localCache:persistentLocalCache()})}catch(e){db=getFirestore(app)}
+const KS='genba-sync',tg=document.getElementById('tg'),OFF='端末内に自動保存されます';
+let ref=null,unsub=null,t=null,dirty=false,pend=false;
+const stat=s=>{tg.textContent=s};
+const push=()=>{if(!ref)return;dirty=false;setDoc(ref,{data:JSON.stringify(S.sites),updated:Date.now()}).catch(()=>stat('☁ 送信エラー（ルール設定を確認）'))};
+window.onSave=()=>{if(!ref)return;dirty=true;clearTimeout(t);t=setTimeout(push,700)};
+const typing=()=>{const a=document.activeElement;return !!a&&['INPUT','TEXTAREA','SELECT'].includes(a.tagName)&&document.getElementById('list').contains(a)};
+document.addEventListener('focusout',()=>{if(pend)setTimeout(()=>{if(pend&&!typing()){pend=false;render()}},400)});
+function start(code){
+ if(unsub)unsub();ref=doc(db,'groups',code);
+ unsub=onSnapshot(ref,snap=>{
+  const m=snap.metadata;
+  stat(m.hasPendingWrites?'☁ 送信待ち':m.fromCache?'☁ オフライン':'☁ 同期中');
+  if(!snap.exists()){if(!m.fromCache)push();return}
+  if(m.hasPendingWrites||dirty)return;
+  let d;try{d=JSON.parse(snap.data().data)}catch(e){return}
+  if(JSON.stringify(d)===JSON.stringify(S.sites))return;
+  S.sites=d;if(!S.sites.find(s=>s.id===S.cur))S.cur=S.sites[0].id;
+  try{localStorage.setItem(K,JSON.stringify(S))}catch(e){}
+  if(typing())pend=true;else render();
+ },()=>stat('☁ 接続エラー'));
+}
+document.getElementById('sy').onclick=async()=>{
+ const cur=localStorage.getItem(KS)||'';
+ const v=await ask(cur?'共有コード（空欄でOKを押すと同期を停止）':'共有コードを入力（英数字・-・_ の8文字以上）',{input:1,def:cur});
+ if(v===null)return;
+ if(!v){localStorage.removeItem(KS);if(unsub)unsub();unsub=null;ref=null;stat(OFF);return}
+ if(!/^[A-Za-z0-9_-]{8,}$/.test(v)){ask('共有コードは英数字・-・_ の8文字以上にしてください',{alert:1});return}
+ try{
+  const snap=await getDoc(doc(db,'groups',v));
+  if(snap.exists()){
+   const has=S.sites.some(s=>s.stock.length||s.orders.length||s.next.length);
+   let same=false;try{same=snap.data().data===JSON.stringify(S.sites)}catch(e){}
+   if(has&&!same&&!(await ask('この共有コードには既にデータがあります。この端末のデータは置き換わります。続けますか？')))return;
+  }
+ }catch(e){ask('接続できませんでした。電波とルール設定を確認してください',{alert:1});return}
+ localStorage.setItem(KS,v);start(v);
+};
+const saved=localStorage.getItem(KS);if(saved)start(saved);
+</script>
+<script>if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));</script></body></html>
